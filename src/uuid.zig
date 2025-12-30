@@ -306,6 +306,67 @@ pub fn uuid6WithNodeId(nodeId: []const u8) UUID {
     return result;
 }
 
+/// Generates a UUID version 7 (time-ordered).
+///
+/// UUIDv7 encodes the current Unix timestamp with sub-millisecond precision
+/// (12-bit fraction) and fills the remaining bits with cryptographically
+/// random data. This ensures that UUIDs are roughly sortable by creation time
+/// while remaining globally unique.
+///
+/// Example:
+///   const uuid = UUID.uuid7();
+///   std.debug.print("UUID = {f}\n", .{uuid});
+///
+/// This may produce output like:
+///   UUID = 019B6FA8-F9E0-700D-8146-BF68584E0EE0
+pub fn uuid7() UUID {
+    var result: UUID = undefined;
+    const timestamp: u60 = nextTimestamp();
+    result.raw[0] = @truncate(timestamp >> 52);
+    result.raw[1] = @truncate(timestamp >> 44);
+    result.raw[2] = @truncate(timestamp >> 36);
+    result.raw[3] = @truncate(timestamp >> 28);
+    result.raw[4] = @truncate(timestamp >> 20);
+    result.raw[5] = @truncate(timestamp >> 12);
+    result.raw[6] = @as(u8, @truncate((timestamp >> 4) & 0x0F)) | 0x70; // version
+    result.raw[7] = @truncate(timestamp);
+    random.bytes(result.raw[8..]);
+    result.raw[8] = (result.raw[8] & 0x3F) | 0x80; // variant
+    return result;
+}
+
+// Calculates the next unique timestamp for UUIDv7 generation.
+//
+// Returns a 60-bit value combining the current time in milliseconds and
+// a sequence number (nanoseconds / 256). Specifically:
+// `(millis << 12) + seq`
+//
+// The result is guaranteed to be strictly greater than any value returned
+// by previous calls, ensuring monotonically increasing timestamps.
+fn nextTimestamp() u60 {
+    const LastTimestamp = struct {
+        var value : u60 = 0;
+    };
+
+    const nanos = std.time.nanoTimestamp();
+    const millis = @divTrunc(nanos, 1_000_000);
+    // Sequence number is between 0 and 3906 (1_000_000 >> 8)
+    const seq = (nanos - millis * 1_000_000) >> 8;
+    var timestamp: u60 = @intCast((millis << 12) + seq);
+
+    if(timestamp <= LastTimestamp.value) {
+        timestamp = LastTimestamp.value + 1;
+    }
+
+    while(true) {
+        if(@cmpxchgStrong(u60, &LastTimestamp.value, LastTimestamp.value, timestamp, .monotonic, .monotonic) == null) {
+            return timestamp;
+        }
+        timestamp = LastTimestamp.value + 1;
+    }
+}
+
+
 /// Compares two UUIDs lexicographically based on their raw byte arrays.
 ///
 /// This is particularly useful for UUIDv1 or UUIDv6, where the byte order
@@ -319,7 +380,12 @@ pub fn uuid6WithNodeId(nodeId: []const u8) UUID {
 ///
 ///   try std.testing.expect(uuid_1.order(uuid_2) == .lt);
 pub fn order(lhs: *const UUID, rhs: UUID) std.math.Order {
-    return std.mem.order(u8, &lhs.raw, &rhs.raw);
+    if(lhs.version() == 7) {
+        return std.mem.order(u8, lhs.raw[0..8], rhs.raw[0..8]);
+    }
+    else {
+        return std.mem.order(u8, &lhs.raw, &rhs.raw);
+    }
 }
 
 /// Generates a random node identifier (typically 6 bytes) for use in UUID v1
@@ -481,6 +547,9 @@ test "should return the correct version" {
 
     const uuidv6_1 = UUID.uuid6WithNodeId(&[6]u8{0x74, 0xA2, 0xEB, 0x92, 0x35,0x0F});
     try std.testing.expect(uuidv6_1.version() == 6);
+
+    const uuidv7 = UUID.uuid7();
+    try std.testing.expect(uuidv7.version() == 7);
 }
 
 test "uuidv1 should use the specified node id" {
@@ -518,6 +587,17 @@ test "uuidv6 should created to be ordered" {
     const uuid_2 = UUID.uuid6();
     const uuid_3 = UUID.uuid6();
     const uuid_4 = UUID.uuid6();
+
+    try std.testing.expect(uuid_1.order(uuid_2) == .lt);
+    try std.testing.expect(uuid_2.order(uuid_3) == .lt);
+    try std.testing.expect(uuid_3.order(uuid_4) == .lt);
+}
+
+test "uuidv7 should created to be ordered" {
+    const uuid_1 = UUID.uuid7();
+    const uuid_2 = UUID.uuid7();
+    const uuid_3 = UUID.uuid7();
+    const uuid_4 = UUID.uuid7();
 
     try std.testing.expect(uuid_1.order(uuid_2) == .lt);
     try std.testing.expect(uuid_2.order(uuid_3) == .lt);

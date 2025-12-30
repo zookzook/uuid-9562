@@ -22,7 +22,8 @@ pub fn main() !void {
 
     const uuidv6 = UUID.uuid6();
     std.debug.print("UUIDv6 = {f}\n", .{uuidv6});
-    std.debug.print("UUIDv6 = {d}\n", .{uuidv6.version()});
 
+    const uuidv7 = UUID.uuid7();
+    std.debug.print("UUIDv7 = {f}\n", .{uuidv7});
 }
 
