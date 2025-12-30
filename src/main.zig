@@ -19,5 +19,10 @@ pub fn main() !void {
 
     const uuidv5_1 = UUID.uuid5WithNamespace("This is my string", UUID.Namespace.url);
     std.debug.print("UUIDv5 = {f}\n", .{uuidv5_1});
+
+    const uuidv6 = UUID.uuid6();
+    std.debug.print("UUIDv6 = {f}\n", .{uuidv6});
+    std.debug.print("UUIDv6 = {d}\n", .{uuidv6.version()});
+
 }
 

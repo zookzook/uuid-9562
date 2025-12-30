@@ -174,7 +174,7 @@ pub fn uuid1() UUID {
 
     // After generating the 48-bit fully randomized node value, implementations MUST set the least significant bit of the first octet of the Node ID to 1
     random.bytes(result.raw[10..]);
-    result.raw[0] = result.raw[0] | 0x01;
+    result.raw[10] = result.raw[10] | 0x01;
 
     return result;
 }
@@ -239,6 +239,87 @@ pub fn uuid5WithNamespace(name: []const u8, namespace: Namespace) UUID {
         .x500 => return namebasedSha1UUID(&x500_prefix, name),
         .nil => return namebasedSha1UUID(&nil_prefix, name),
     }
+}
+
+///
+/// Generates a UUID version 6 which is a field-compatible variant of UUIDv1, with the timestamp fields
+/// rearranged to improve chronological ordering in databases and indexes.
+///
+/// Example:
+///   const id = UUID.uuid6();
+pub fn uuid6() UUID {
+    var result: UUID = undefined;
+    const timestamp: u60 = @intCast(@divTrunc(std.time.nanoTimestamp(), 100) + g1582ns100);
+    const seq = incSeq();
+
+    result.raw[0] = @truncate(timestamp >> 52);
+    result.raw[1] = @truncate(timestamp >> 44);
+    result.raw[2] = @truncate(timestamp >> 36);
+    result.raw[3] = @truncate(timestamp >> 28);
+    result.raw[4] = @truncate(timestamp >> 20);
+    result.raw[5] = @truncate(timestamp >> 12);
+    result.raw[6] = @as(u8, @truncate(timestamp >> 4)) & 0x0f | 0x60; // version
+    result.raw[7] = @truncate(timestamp);
+    result.raw[8] = 0x80 | @as(u8, @truncate(seq >> 6)); // variant + seq
+    result.raw[9] = @truncate(seq);
+
+    // After generating the 48-bit fully randomized node value, implementations MUST set the least significant bit of the first octet of the Node ID to 1
+    random.bytes(result.raw[10..]);
+    result.raw[10] = result.raw[10] | 0x01;
+
+    return result;
+
+}
+
+/// Generates a UUID version 6 (time-ordered) using the specified node identifier.
+///
+/// The `nodeId` should be a 6-byte slice (typically an IEEE 802 MAC address).
+/// If a hardware MAC address is unavailable, you can generate a random node ID
+/// once using `randomNodeId()` and reuse it for subsequent UUIDs.
+///
+/// The clock sequence starts at 1 by default and is automatically incremented
+/// with each call to ensure uniqueness.
+///
+/// Example:
+///   var nodeId: [6]u8 = undefined;
+///   UUID.randomNodeId(&nodeId);
+///   const id = UUID.uuid6WithNodeId(&nodeId);
+pub fn uuid6WithNodeId(nodeId: []const u8) UUID {
+
+    var result: UUID = undefined;
+    const timestamp: u60 = @intCast(@divTrunc(std.time.nanoTimestamp(), 100) + g1582ns100);
+    const seq = incSeq();
+
+    result.raw[0] = @truncate(timestamp >> 52);
+    result.raw[1] = @truncate(timestamp >> 44);
+    result.raw[2] = @truncate(timestamp >> 36);
+    result.raw[3] = @truncate(timestamp >> 28);
+    result.raw[4] = @truncate(timestamp >> 20);
+    result.raw[5] = @truncate(timestamp >> 12);
+    result.raw[6] = @as(u8, @truncate(timestamp >> 4)) & 0x0f | 0x60; // version
+    result.raw[7] = @truncate(timestamp);
+    result.raw[8] = 0x80 | @as(u8, @truncate(seq >> 6)); // variant + seq
+    result.raw[9] = @truncate(seq);
+
+    @memcpy(result.raw[10..], nodeId);
+
+    return result;
+}
+
+/// Compares two UUIDs lexicographically based on their raw byte arrays.
+///
+/// This is particularly useful for UUIDv1 or UUIDv6, where the byte order
+/// preserves chronological ordering. The function returns a value of type
+/// `std.math.Order` indicating whether `lhs` is less than, equal to, or greater
+/// than `rhs`.
+///
+/// Example:
+///   const uuid_1 = UUID.uuid6();
+///   const uuid_2 = UUID.uuid6();
+///
+///   try std.testing.expect(uuid_1.order(uuid_2) == .lt);
+pub fn order(lhs: *const UUID, rhs: UUID) std.math.Order {
+    return std.mem.order(u8, &lhs.raw, &rhs.raw);
 }
 
 /// Generates a random node identifier (typically 6 bytes) for use in UUID v1
@@ -374,8 +455,11 @@ test "should init with u128 values" {
 }
 
 test "should return the correct version" {
-    const uuid = UUID.uuid1();
-    try std.testing.expect(uuid.version() == 1);
+    const uuidv1 = UUID.uuid1();
+    try std.testing.expect(uuidv1.version() == 1);
+
+    const uuidv1_1 = UUID.uuid1WithNodeId(&[6]u8{0x74, 0xA2, 0xEB, 0x92, 0x35,0x0F});
+    try std.testing.expect(uuidv1_1.version() == 1);
 
     const uuidv3 = UUID.uuid3("This is my string.", "7525E1FC-5512-48CE-A457-74A2EB92350F");
     try std.testing.expect(uuidv3.version() == 3);
@@ -391,9 +475,15 @@ test "should return the correct version" {
 
     const uuidv5_1 = UUID.uuid5WithNamespace("This is my string", UUID.Namespace.url);
     try std.testing.expect(uuidv5_1.version() == 5);
+
+    const uuidv6 = UUID.uuid6();
+    try std.testing.expect(uuidv6.version() == 6);
+
+    const uuidv6_1 = UUID.uuid6WithNodeId(&[6]u8{0x74, 0xA2, 0xEB, 0x92, 0x35,0x0F});
+    try std.testing.expect(uuidv6_1.version() == 6);
 }
 
-test "should use the specified node id" {
+test "uuidv1 should use the specified node id" {
     const nodeId = [6]u8{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE};
     var uuid = UUID.uuid1WithNodeId(&nodeId);
 
@@ -406,6 +496,32 @@ test "should use the specified node id" {
 
     out = uuid.formatUUID(.default, &buf36);
     try std.testing.expectEqualStrings(out[24..], "00AABBCCDDEE");
+}
+
+test "uuidv6 should use the specified node id" {
+    const nodeId = [6]u8{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE};
+    var uuid = UUID.uuid6WithNodeId(&nodeId);
+
+    try std.testing.expect(uuid.version() == 6);
+    var buf36: [36]u8 = undefined;
+    var out = uuid.formatUUID(.default, &buf36);
+    try std.testing.expectEqualStrings(out[24..], "00AABBCCDDEE");
+
+    uuid = UUID.uuid6WithNodeId(&nodeId);
+
+    out = uuid.formatUUID(.default, &buf36);
+    try std.testing.expectEqualStrings(out[24..], "00AABBCCDDEE");
+}
+
+test "uuidv6 should created to be ordered" {
+    const uuid_1 = UUID.uuid6();
+    const uuid_2 = UUID.uuid6();
+    const uuid_3 = UUID.uuid6();
+    const uuid_4 = UUID.uuid6();
+
+    try std.testing.expect(uuid_1.order(uuid_2) == .lt);
+    try std.testing.expect(uuid_2.order(uuid_3) == .lt);
+    try std.testing.expect(uuid_3.order(uuid_4) == .lt);
 }
 
 test "should format a UUIDv1 value" {
@@ -423,7 +539,6 @@ test "should format a UUIDv1 value" {
 
     try std.testing.expect(uuid.version() == 1);
 }
-
 
 test "format should return default, hex and slug strings" {
     var buf36: [36]u8 = undefined;
