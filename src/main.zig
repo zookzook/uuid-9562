@@ -25,5 +25,10 @@ pub fn main() !void {
 
     const uuidv7 = UUID.uuid7();
     std.debug.print("UUIDv7 = {f}\n", .{uuidv7});
+
+    const uuid = try UUID.parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    std.debug.print("Parsed UUID = {f}\n", .{uuid});
+    std.debug.print("Parsed UUID Version = {d}\n", .{uuid.version()});
+
 }
 
