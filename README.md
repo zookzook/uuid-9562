@@ -24,6 +24,45 @@ In addition, there are other Zig implementations that cover the same range of fu
 
 ## Installation
 No external dependencies are required beyond Zig’s standard library.
+Add the dependency package in your zig project:
+
+```bash 
+zig fetch --save git+https://github.com/zookzook/uuid-9562
+```
+
+After that, you can wire up everything in your `build.zig` file:
+
+```zig
+
+    ...
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+    ...
+    
+    const uuid = b.dependency("uuid", .{.target = target, .optimize = optimize});
+    const uuid_mod = uuid.module("uuid");
+```
+
+You can add the module using the `addImport` function like this:
+```zig
+    exe.root_module.addImport("uuid", uuid_mod);
+```
+
+Or you add the module to the `imports` when add an executable to the build graph:
+```zig 
+ const exe = b.addExecutable(.{
+        .name = "myapp",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "uuid", .module = uuid_mod },
+            },
+        }),
+    });
+
+```
 
 ## Quick Start
 
@@ -31,7 +70,7 @@ No external dependencies are required beyond Zig’s standard library.
 
 ```zig
 const std = @import("std");
-const UUID = @import("uuid.zig");
+const UUID = @import("uuid");
 
 pub fn main() !void {
     const uuid = UUID.uuid4();
